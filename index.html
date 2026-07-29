@@ -68,6 +68,7 @@
   var currentIndex = 0;
   var player = document.getElementById('clip-player');
   var statusNote = document.getElementById('status-note');
+  var unmuteTimer = null;
 
   function log(msg) { statusNote.textContent = msg; }
   function show(msg, err) { player.innerHTML = '<div class="' + (err ? 'error' : 'loading') + '">' + msg + '</div>'; }
@@ -86,6 +87,9 @@
   }
 
   function loadClip(index) {
+    if (unmuteTimer) { clearInterval(unmuteTimer); unmuteTimer = null; }
+    show('Loading clip ' + (index + 1) + ' / ' + clips.length);
+
     currentIndex = index;
     var clip = clips[index];
     if (!clip) { show('No clips', true); return; }
@@ -121,12 +125,13 @@
       v.muted = false;
       v.onended = nextClip;
       v.onerror = function() { log('Error, skipping...'); setTimeout(nextClip, 2000); };
-      v.oncanplay = function() { v.play(); v.muted = false; };
+
       var tries = 0;
-      var force = setInterval(function() {
-        if (++tries > 20) { clearInterval(force); return; }
+      unmuteTimer = setInterval(function() {
+        if (++tries > 20) { clearInterval(unmuteTimer); unmuteTimer = null; return; }
         v.muted = false; v.volume = 1.0; v.play();
       }, 500);
+
 
       log((index + 1) + ' / ' + clips.length);
     }).catch(function(err) {
