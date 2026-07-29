@@ -114,7 +114,7 @@
       var source = clipData.videoQualities[0].sourceURL;
       var mp4Url = source + '?sig=' + encodeURIComponent(token.signature) + '&token=' + encodeURIComponent(token.value);
 
-      player.innerHTML = '<video id="clip-video" autoplay style="width:100%;height:100%;object-fit:contain;background:#0e0e0e;"></video>';
+      player.innerHTML = '<video id="clip-video" autoplay muted style="width:100%;height:100%;object-fit:contain;background:#0e0e0e;"></video>';
       var v = document.getElementById('clip-video');
       v.src = mp4Url;
       v.volume = 1.0;
