@@ -28,7 +28,7 @@
     #clip-player .loading,#clip-player .error{
       display:flex;align-items:center;justify-content:center;height:100%;color:#52525b;font-size:0.9rem
     }
-    #clip-player iframe{width:100%;height:100%;border:0}
+    #clip-player video{width:100%;height:100%;object-fit:contain;background:#0e0e0e}
     .bot{text-align:center;padding-bottom:16px;position:relative;z-index:1}
     .bot .reconnect{
       font-size:clamp(1rem,2.5vw,1.5rem);font-weight:600;text-transform:uppercase;
@@ -70,23 +70,21 @@
 
   var clips = [];
   var currentIndex = 0;
-  var timer = null;
   var player = document.getElementById('clip-player');
   var statusNote = document.getElementById('status-note');
 
   function log(msg) { statusNote.textContent = msg; }
   function show(msg, err) { player.innerHTML = '<div class="' + (err ? 'error' : 'loading') + '">' + msg + '</div>'; }
 
-  function gql(query) {
+  function gql(payload) {
     return fetch(GQL_URL, {
       method: 'POST',
       headers: { 'Client-ID': CLIENT_ID, 'Content-Type': 'text/plain; charset=utf-8' },
-      body: JSON.stringify({ query: query }),
+      body: JSON.stringify(payload),
     }).then(function(r) { return r.json(); });
   }
 
   function nextClip() {
-    if (timer) clearTimeout(timer);
     currentIndex = (currentIndex + 1) % clips.length;
     loadClip(currentIndex);
   }
@@ -96,26 +94,52 @@
     var clip = clips[index];
     if (!clip) { show('No clips', true); return; }
 
-    var host = window.location.hostname;
-    var src = 'https://clips.twitch.tv/embed?clip=' + encodeURIComponent(clip.slug) +
-              '&parent=' + encodeURIComponent(host) + '&autoplay=true&muted=false';
+    log((index + 1) + ' / ' + clips.length + ' - fetching...');
 
-    player.innerHTML = '<iframe src="' + src + '" allow="autoplay; fullscreen"></iframe>';
-    log((index + 1) + ' / ' + clips.length);
+    gql({
+      operationName: 'VideoAccessToken_Clip',
+      variables: { slug: clip.slug },
+      extensions: {
+        persistedQuery: { version: 1, sha256Hash: '36b89d2507fce29e5ca551df756d27c1cfe079e2609642b4390aa4c35796eb11' }
+      }
+    }).then(function(json) {
+      if (json.errors) {
+        return gql({
+          query: 'query VideoAccessToken_Clip($slug: ID!) { clip(slug: $slug) { playbackAccessToken(params: {platform: "web", playerBackend: "mediaplayer", playerType: "site"}) { signature value } videoQualities { frameRate quality sourceURL } } }',
+          variables: { slug: clip.slug }
+        });
+      }
+      return json;
+    }).then(function(json) {
+      if (!json || json.errors || !json.data || !json.data.clip) throw new Error(json && json.errors ? json.errors[0].message : 'No clip data');
+      var clipData = json.data.clip;
+      if (!clipData.playbackAccessToken || !clipData.videoQualities || clipData.videoQualities.length === 0) throw new Error('No playback data');
+      var token = clipData.playbackAccessToken;
+      var source = clipData.videoQualities[0].sourceURL;
+      var mp4Url = source + '?sig=' + encodeURIComponent(token.signature) + '&token=' + encodeURIComponent(token.value);
 
-    gql('query{clip(slug:"' + clip.slug + '"){durationSeconds}}').then(function(json) {
-      var sec = (json && json.data && json.data.clip && json.data.clip.durationSeconds) || 30;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(nextClip, (sec + 1) * 1000);
+      player.innerHTML = '<video id="clip-video" autoplay muted style="width:100%;height:100%;object-fit:contain;background:#0e0e0e;"></video>';
+      var v = document.getElementById('clip-video');
+      v.src = mp4Url;
+      v.volume = 1.0;
+      v.onended = nextClip;
+      v.onerror = function() { log('Error, skipping...'); setTimeout(nextClip, 2000); };
+
+      log((index + 1) + ' / ' + clips.length);
+    }).catch(function(err) {
+      log('failed: ' + err.message);
+      setTimeout(nextClip, 3000);
     });
   }
 
-  gql('query{user(login:"' + CHANNEL + '"){clips(first:50){edges{node{slug title createdAt durationSeconds}}}}}').then(function(json) {
+  gql({
+    query: 'query{user(login:"' + CHANNEL + '"){clips(first:50){edges{node{slug title createdAt durationSeconds}}}}}'
+  }).then(function(json) {
     if (json.errors) throw new Error(json.errors[0].message);
     var edges = json && json.data && json.data.user && json.data.user.clips && json.data.user.clips.edges;
     if (!edges || edges.length === 0) throw new Error('No clips');
     clips = edges.map(function(e) {
-      return { slug: e.node.slug, title: e.node.title, created_at: e.node.createdAt, duration: e.node.durationSeconds || 30 };
+      return { slug: e.node.slug, title: e.node.title, created_at: e.node.createdAt };
     }).sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
     log(clips.length + ' clips');
     loadClip(0);
