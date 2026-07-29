@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Disconnect Protection — dj_cheesuslive</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    html,body{height:100%;background:#080808;color:#fff;font-family:Arial,Helvetica,sans-serif}
+    body{display:flex;flex-direction:column;padding:32px;position:relative}
+    .bg-grid{
+      position:fixed;inset:0;pointer-events:none;z-index:0;
+      background-image:
+        linear-gradient(rgba(34,211,238,0.025) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(34,211,238,0.025) 1px,transparent 1px);
+      background-size:48px 48px
+    }
+    .top{text-align:center;padding-top:8px;position:relative;z-index:1}
+    .top h1{
+      font-size:clamp(1.2rem,3vw,2rem);font-weight:700;text-transform:uppercase;
+      letter-spacing:6px;color:#f87171;
+      text-shadow:0 0 20px rgba(248,113,113,0.15)
+    }
+    .mid{flex:1;display:flex;align-items:center;justify-content:center;padding:24px 0;position:relative;z-index:1}
+    .player-wrap{width:100%;max-width:800px;border:1px solid #1e293b;border-radius:4px;overflow:hidden;position:relative}
+    .player-aspect{position:relative;width:100%;aspect-ratio:16/9;background:#0e0e0e}
+    #clip-player{position:absolute;inset:0;width:100%;height:100%;border:0}
+    #clip-player .loading,#clip-player .error{
+      display:flex;align-items:center;justify-content:center;height:100%;color:#52525b;font-size:0.9rem
+    }
+    #clip-player iframe{width:100%;height:100%;border:0}
+    .bot{text-align:center;padding-bottom:16px;position:relative;z-index:1}
+    .bot .reconnect{
+      font-size:clamp(1rem,2.5vw,1.5rem);font-weight:600;text-transform:uppercase;
+      letter-spacing:3px;color:#22d3ee;
+      text-shadow:0 0 20px rgba(34,211,238,0.1)
+    }
+    .bot .note{font-size:0.7rem;color:#52525b;margin-top:8px}
+    @media(max-width:600px){body{padding:16px}.mid{padding:16px 0}}
+  </style>
+</head>
+<body>
+
+<div class="bg-grid"></div>
+
+<div class="top">
+  <h1>INGEST OFFLINE</h1>
+</div>
+
+<div class="mid">
+  <div class="player-wrap">
+    <div class="player-aspect">
+      <div id="clip-player"><div class="loading">Loading clips...</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="bot">
+  <div class="reconnect">attempting to reconnect</div>
+  <div class="note" id="status-note"></div>
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  var CHANNEL = 'dj_cheesuslive';
+  var GQL_URL = 'https://gql.twitch.tv/gql';
+  var CLIENT_ID = 'kimne78kx3ncx6brgo4mv6wki5h1ko';
+
+  var clips = [];
+  var currentIndex = 0;
+  var timer = null;
+  var player = document.getElementById('clip-player');
+  var statusNote = document.getElementById('status-note');
+
+  function log(msg) { statusNote.textContent = msg; }
+  function show(msg, err) { player.innerHTML = '<div class="' + (err ? 'error' : 'loading') + '">' + msg + '</div>'; }
+
+  function gql(query) {
+    return fetch(GQL_URL, {
+      method: 'POST',
+      headers: { 'Client-ID': CLIENT_ID, 'Content-Type': 'text/plain; charset=utf-8' },
+      body: JSON.stringify({ query: query }),
+    }).then(function(r) { return r.json(); });
+  }
+
+  function nextClip() {
+    if (timer) clearTimeout(timer);
+    currentIndex = (currentIndex + 1) % clips.length;
+    loadClip(currentIndex);
+  }
+
+  function loadClip(index) {
+    currentIndex = index;
+    var clip = clips[index];
+    if (!clip) { show('No clips', true); return; }
+
+    var host = window.location.hostname;
+    var src = 'https://clips.twitch.tv/embed?clip=' + encodeURIComponent(clip.slug) +
+              '&parent=' + encodeURIComponent(host) + '&autoplay=true&muted=false';
+
+    player.innerHTML = '<iframe src="' + src + '" allow="autoplay; fullscreen"></iframe>';
+    log((index + 1) + ' / ' + clips.length);
+
+    gql('query{clip(slug:"' + clip.slug + '"){durationSeconds}}').then(function(json) {
+      var sec = (json && json.data && json.data.clip && json.data.clip.durationSeconds) || 30;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(nextClip, (sec + 1) * 1000);
+    });
+  }
+
+  gql('query{user(login:"' + CHANNEL + '"){clips(first:50){edges{node{slug title createdAt durationSeconds}}}}}').then(function(json) {
+    if (json.errors) throw new Error(json.errors[0].message);
+    var edges = json && json.data && json.data.user && json.data.user.clips && json.data.user.clips.edges;
+    if (!edges || edges.length === 0) throw new Error('No clips');
+    clips = edges.map(function(e) {
+      return { slug: e.node.slug, title: e.node.title, created_at: e.node.createdAt, duration: e.node.durationSeconds || 30 };
+    }).sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    log(clips.length + ' clips');
+    loadClip(0);
+  }).catch(function(err) {
+    log('failed: ' + err.message);
+    show('Could not load clips', true);
+  });
+})();
+</script>
+
+</body>
+</html>
